@@ -1,0 +1,760 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{palatino}
+\usepackage{paralist}
+\usepackage{verbatim}
+\usepackage[a4paper,top=2cm,bottom=2cm,left=2.5cm,right=2.5cm]{geometry}
+
+\makeatletter
+\def\verbatim@font{\ttfamily\small}
+\makeatother
+
+\usepackage{minted}
+\newminted{clojure}{fontsize=\footnotesize,frame=lines,linenos}
+
+
+\title{Solving the Petri-Nets to Statecharts Transformation Case with FunnyQT}
+\author{Tassilo Horn\\
+  \href{mailto:horn@uni-koblenz.de}{horn@uni-koblenz.de}\\
+  Institute for Software Technology\\
+  University Koblenz-Landau}
+
+\clubpenalty = 10000
+\widowpenalty = 10000
+\displaywidowpenalty = 10000
+
+%% Reduce the space between image and captions
+\setlength\abovecaptionskip{0.1cm}
+\setlength\belowcaptionskip{0cm}
+
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  This paper describes the FunnyQT solution to the TTC 2013 Petri-Nets to
+  Statcharts Transformation Case.
+
+  FunnyQT is a model querying and model transformation library for the
+  functional Lisp-dialect Clojure.  It supports the modeling frameworks JGraLab
+  and EMF natively, and it is designed to be extensible towards supporting
+  other frameworks as well.
+
+  FunnyQT provides a rich and efficient querying API, a model manipulation API,
+  and on top of those, there are several sub-APIs for implementing several
+  kinds of transformations such as ATL-like model transformations or programmed
+  graph transformations.
+
+  For solving this case, the model transformation API has been used for the
+  initialization transformation, while the reduction transformation has been
+  tackled algorithmically using the plain querying and model manipulation APIs.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:introduction}
+
+\emph{FunnyQT} is a new model querying and transformation approach.  Instead of
+inventing yet another language with its own concrete syntax and semantics, it
+is implemented as an API for the functional, JVM-based Lisp-dialect
+Clojure\footnote{\url{http://clojure.org/}}.  It's JVM-basing provides
+wrapper-free access to all existing Clojure and Java libraries, and to other
+tools in the rich Java ecosystem such as profilers.
+
+FunnyQT natively supports the de-facto standard modeling framework EMF
+\cite{Steinberg2008EEM} and the TGraph modeling framework
+JGraLab\footnote{\url{http://jgralab.uni-koblenz.de}}, and it is designed to be
+extensible towards other frameworks as well.
+
+FunnyQT's API is split up in several sub-APIs.  On the lowest level there is a
+core API for any supported modeling framework providing functions for loading
+and storing models, accessing, creating, and deleting model elements, and
+accessing and setting attribute values.  These core APIs mainly provide a
+concise and expressive interface to the native Java APIs of the frameworks.  On
+top of that, there's a generic API providing the subset of core functionality
+that is common to both supported frameworks such as navigation via role names,
+access to and manipulation of element properties, or functionality concerned
+with typing imposed by metamodels.  Furthermore, there is a generic quering API
+providing important querying concepts such as quantified expressions, regular
+path expressions, or pattern matching.
+
+Based on those querying and model manipulation APIs, there are several sub-APIs
+for implementing different kinds of transformations.  For example, there is a
+model transformation API similar to ATL \cite{ATL05} or ETL
+\cite{booklet:epsilon}, or there is an in-place transformation API for writing
+programmed graph transformations similar to GrGen.NET
+\cite{manual:GrGenManual}.
+
+Especially the pattern matching API and the transformation APIs make use of
+Clojure's Lisp-inherited metaprogramming facilities
+\cite{Graham1993OnLisp,Hoyte08LoL} in that they provide macros creating
+internal DSLs \cite{book:Fowler2010DSL} providing concise, boilerplate-free
+syntaxes to users.  Patterns and transformations written in these internal DSLs
+get transformed to usual Clojure code using the FunnyQT querying and model
+manipulation APIs by the Clojure compiler.
+
+For solving the tasks of this transformation case, FunnyQT's model
+transformation API has been used for the initialization transformation
+discussed in Section~\ref{sec:init-transformation}, while the reduction
+transformation explained in Section~\ref{sec:reduction-transformation} has been
+tackled algorithmically using the plain querying and model manipulation APIs.
+
+
+\section{The Initialization Transformation}
+\label{sec:init-transformation}
+
+The complete initialization transformation is shown in Listing~\ref{lst:init}.
+It uses FunnyQT's model transformation API.
+
+A transformation is declared with the \verb|deftransformation| macro.  It
+receives the name of the transformation, i.e., \verb|initialize-statechart|, a
+vector of input and output models, and arbitrary many rules.
+
+The argument vector declares that the transformation receives one single input
+model \verb|pn| which is an EMF model, and it receives exactly one output model
+\verb|sc| which is also an EMF model.  It could also receive many input or
+output models, and the models could belong to different modeling frameworks as
+well.
+
+\begin{sloppypar}
+  The transformation consists of two transformation rules:
+  \verb|place2basic-and-or|, and \verb|transition2hyperedge|.  Every rule has
+  exactly one parameter denoting the source element.  The \verb|:from| clause
+  defines the metamodel type the rule is applicable for.  The \verb|:to| clause
+  specifies which target elements have to be created.  Additionally, arbitrary
+  constraints could be defined for a rule using a \verb|:when| clause.
+  Thereafter, arbitrary code may follow for initializing the newly created
+  elements and calling other rules.
+\end{sloppypar}
+
+When a rule gets called and is applicable with respect to its declared
+\verb|:from| type and \verb|:when| constraint, it creates the elements declared
+in \verb|:to| in the target model, and evaluates its body.  In case there is
+just one new element declared in \verb|:to|, it returns just that.  If there
+are many new elements, it returns them as a vector in their declaration order.
+Furthermore, a traceability mapping is created from the source element to the
+rule's return value.  If a rule gets called multiple times for a single
+element, the second and all following calls just return the result of the first
+invocation.
+
+
+\begin{listing}[H]
+  \begin{clojurecode}
+(deftransformation initialize-statechart [[pn :emf] [sc :emf]]
+  (^:top place2basic-and-or [p]
+         :from 'Place
+         :to [o 'OR, b 'Basic]
+         (eset! b :name (eget p :name))
+         (eset! b :rcontains o)
+         (eset! b :rnext (map transition2hyperedge
+                              (eget p :pret)))
+         (eset! b :next  (map transition2hyperedge
+                              (eget p :postt))))
+  (transition2hyperedge [t]
+         :from 'Transition
+         :to [he 'HyperEdge]
+         (eset! he :name (eget t :name))))
+  \end{clojurecode}
+  \label{lst:init}
+  \caption{The initialization transformation}
+\end{listing}
+
+\begin{sloppypar}
+  The \verb|place2basic-and-or| rule creates an \verb|OR o| and a
+  \verb|Basic b| for any \verb|Place p| it is called with, it sets the name of
+  the \verb|Basic| to the name of the \verb|Place|, and assigns the new
+  \verb|OR| as container of \verb|b|.  Lastly, it maps the
+  \verb|transition2hyperedge| rule over the pre/post-transitions of \verb|p|
+  setting the results to \verb|b|'s \verb|rnext|/\verb|next| references.
+
+  The \verb|^:top| metadata at the rule specifies that this rule is called
+  automatically for any \verb|Place| in the source Petri-net model \verb|pn|.
+  In contrast, the \verb|transition2hyperedge| rule is only called explicitly
+  from \verb|place2basic-and-or|.
+\end{sloppypar}
+
+The result of such a transformation is always a map of traceability
+information.  The keys of the map are keywords denoting the rules, the values
+are maps from source elements to rule results.  So in this concrete case, the
+traceability map returned by the transformation has the form:
+
+\begin{clojurecode*}{linenos=false}
+{:place2basic-and-or   {<place1> [<or1> <basic1>], ...},
+ :transition2hyperedge {<transition1> <hyperedge1>, ...}}
+\end{clojurecode*}
+
+The function \verb|init-statechart| depicted in Listing~\ref{lst:init-fn} is a
+convenience wrapper for applying the transformation.
+
+\begin{listing}[H]
+  \begin{clojurecode*}{firstnumber=15}
+(defn init-statechart [pn]
+  (let [sc (new-model)
+        trace (initialize-statechart pn sc)]
+    [sc
+     (apply hash-map (mapcat (fn [[p [o b]]] [p o])
+                             (:place2basic-and-or trace)))
+     (apply hash-map (mapcat (fn [[p [o b]]] [p b])
+                             (:place2basic-and-or trace)))
+     (:transition2hyperedge trace)]))
+  \end{clojurecode*}
+  \label{lst:init-fn}
+  \caption{An initialization transformation wrapper function}
+\end{listing}
+
+It receives a Petri-net model \verb|pn|, creates a new empty model \verb|sc|
+for the statechart, calls the \verb|initialize-statechart| transformation, and
+then mangles the traceability map in order to return a vector of four
+components: the initialized statechart model, a map from places to
+corresponding \verb|OR| elements, a map from places to corresponding
+\verb|Basic| elements, and a map from transitions to corresponding hyperedges.
+The first map is required by the reduction transformation, whereas the other
+two maps are only used by the unit-tests for the initialization transformation
+(see Section~\ref{sec:validation}).
+
+
+\section{The Reduction Transformation}
+\label{sec:reduction-transformation}
+
+The reduction transformation is implemented algorithmically based on FunnyQT's
+querying and model manipulation APIs.  It consists of four rules (functions):
+\begin{compactenum}
+\item The AND-rule as discussed in the case description \cite{pn2sccasedesc},
+\item the OR-rule as discussed in the case description,
+\item an additional, extension rule assigning hyperedges to the nearest
+  \verb|Compound| state containing all their predecessor and successor
+  \verb|Basic| states,
+\item and a rule creating a \verb|Statechart| with an \verb|AND| top-state if
+  the reduction could be completed successfully.
+\end{compactenum}
+
+
+\subsection{The Reduction Function}
+\label{sec:reduction-function}
+
+The reduction transformation (a plain function) is shown in
+Listing~\ref{lst:reduction-fn}.
+
+It receives a Petri-net model \verb|pn| and calls the statechart initialization
+function from Listing~\ref{lst:init-fn}.  As discussed above, this function
+returns a vector containing the new statechart and three traceability maps.  By
+imitating the result structure in the \verb|let|, the new statechart is
+assigned to \verb|sc|, and the map from places to OR objects is assigned to
+\verb|place2or|.  The other two maps are not needed for the reduction, so they
+are assigned to a variable \verb|_|, which is conventionally used as ``don't
+care''.  This technique of binding parts of the contents collections directly
+by imitating their structure is known as \emph{destructuring} in the
+Lisp-world.
+
+All Clojure datastructures are immutable.  However, the transformation rules
+will need to modify the \verb|place2or| traceability map.  Therefore, it is
+wrapped in and atom.  An atom is a mutable reference that can be swapped to a
+new value atomically.
+
+\begin{listing}[H]
+  \begin{clojurecode*}{firstnumber=24}
+(defn create-statechart [pn]
+  (let [[sc place2or _ _] (init/init-statechart pn)
+        place2or (atom place2or)]
+    (iteratively (fn []
+                   (let [r     (and-rule pn sc prep  place2or)
+                         r (or (and-rule pn sc postp place2or) r)
+                         r (or (or-rule  pn sc place2or)       r)]
+                     r)))
+    (create-top sc)
+    (assign-hyperedges sc)
+    sc))
+  \end{clojurecode*}
+  \label{lst:reduction-fn}
+  \caption{The reduction function implementing the transformation}
+\end{listing}
+
+
+Starting with line 27, the rules are applied.  The higher-order function
+\verb|iteratively| takes a function and applies it as long as it returns
+logically true\footnote{In Clojure, everything is logically true except for
+  \textsf{false} and \textsf{nil}.}
+
+The anonymous function it is called with applies the \verb|and-rule| once for
+pre-places and once for post-places, and finally it calls the \verb|or-rule|.
+The results of the rules are combined using disjunction in such a way that all
+rules get applied in that sequence and the final result \verb|r| is logical
+true if at least one rule could be applied.
+
+Lastly, the \verb|create-top| rule creating a \verb|Statechart| element and its
+top-AND-State, and the \verb|assign-hyperedges| rule are applied.  The final
+result is the new statechart \verb|sc|.
+
+
+\subsection{Reduction Helper Functions}
+\label{sec:reduct-help-functions}
+
+Before discussing the rules, the helper functions depicted in
+Listing~\ref{lst:reduction-helpers} are explained.
+
+\begin{listing}[H]
+  \begin{clojurecode*}{firstnumber=35}
+(defn refs-as-set [ref elem]
+  (set (eget-raw elem ref)))
+
+(def postt (partial refs-as-set :postt))
+(def pret  (partial refs-as-set :pret))
+(def postp (partial refs-as-set :postp))
+(def prep  (partial refs-as-set :prep))
+  \end{clojurecode*}
+  \label{lst:reduction-helpers}
+  \caption{Helper functions for the reduction rules}
+\end{listing}
+
+The function \verb|refs-as-set| gets a (multi-valued) reference name as a
+keyword and some model element, and it returns the value of this reference
+coerced to a set\footnote{\textsf{eget-raw} is similar to \textsf{eget}, except
+  that the former just returns the EMF collection, i.e., a mutable
+  \textsf{EList}, wheras the latter also coerces to an immutable Clojure
+  collections.  Because we are coercing to an immutable Clojure set anyway,
+  this is unneeded effort here.}.
+
+Then, there are four partial applications of this function where its first
+parameter is already preset, thus leaving functions that just receive an
+element.  That is, \verb|postt| and \verb|pret| are functions for getting the
+set of post- and pre-transitions of a given \verb|Place|, and \verb|postp| and
+\verb|prep| are functions for getting the set of post- and pre-places of a
+given \verb|Transition|.
+
+\subsection{The AND Rule}
+\label{sec:and-rule}
+
+The AND rule is depicted in Listing~\ref{lst:and-rule}.  In contrast to the
+Figure~2 in the case description \cite{pn2sccasedesc}, it doesn't delete all
+places $q_1$ to $q_n$ to create a new place $p$, but instead it reuses $q_1$ as
+$p$ and deletes only $q_2$ to $q_n$.  This is consistent with Louis Rose's EOL
+solution, and it even feels more natural at least for algorithmic solutions.
+
+The rule function receives the Petri-net model \verb|pn|, the statechart model
+\verb|sc|, either the function \verb|prep| or \verb|postp| as
+\verb|prep-or-postp|, and the traceability map atom \verb|place2or|.
+
+\begin{listing}[H]
+  \begin{clojurecode*}{firstnumber=42}
+(defn and-rule [pn sc prep-or-postp place2or]
+  (loop [ts (eallobjects pn 'Transition), applied false]
+    (if (seq ts)
+      (let [t (first ts), preps-or-postps (prep-or-postp t)]
+        (if (> (count preps-or-postps) 1)
+          (let [p (first preps-or-postps), prets (pret p), postts (postt p)]
+            (if (forall? #(and (= prets  (pret %))
+                               (= postts (postt %)))
+                         (rest preps-or-postps))
+              (let [new-or  (ecreate! sc 'OR), new-and (ecreate! sc 'AND)]
+                (eset! new-and :contains (mapv @place2or preps-or-postps))
+                (eadd! new-or  :contains new-and)
+                (swap! place2or assoc p new-or)
+                (doseq [op (rest preps-or-postps)]
+                  (edelete! op))
+                (recur (rest ts) true))
+              (recur (rest ts) applied)))
+          (recur (rest ts) applied)))
+      applied)))
+  \end{clojurecode*}
+  \label{lst:and-rule}
+  \caption{The AND rule}
+\end{listing}
+
+It uses \verb|loop| and \verb|recur| which implement a local tail-recursion,
+i.e., a recursion that doesn't consume space on the call-stack.  \verb|loop|
+defines the initial bindings, and \verb|recur| restarts the loop with new
+bindings.  So initially, \verb|ts| is bound to the sequence of all transitions
+in the model, and \verb|applied|, which is used to indicate to the caller if at
+least one match has been found, is \verb|false|.
+
+If there are no transitions left\footnote{\textsf{(seq coll) is the canonical
+    non-emptiness check in Clojure.}} (the else-branch of the \verb|if| in line
+44), the function returns with the current value of \verb|applied|.  If there
+are still transitions, the first one is bound to \verb|t| and its set of pre-
+or post-places is bound to \verb|preps-or-posts| (line 45).
+
+If there aren't more than one pre- or post-places of \verb|t| (the else branch
+of the \verb|if| in line 46), the \verb|loop| gets restarted with the rest of
+transitions and the current value of \verb|applied|.  If there are more than
+one pre- or post-places, the first one is bound to \verb|p|, and \verb|prets|
+and \verb|postts| are its pre- and post-transitions (line 47).
+
+If the other pre- or post-places don't have the same sets of pre- and
+post-transitions (the else-branch of the \verb|if| in line 48), the \verb|loop|
+is restarted with the remaining transitions and the current value of
+\verb|applied|.  However, if the pre- and post-transitition sets are all equal,
+the rule matches.  In that case, lines 51 to 56 create a new \verb|OR| and a
+new \verb|AND| where the \verb|OR| contains the \verb|AND|, and the \verb|AND|
+contains all the \verb|OR| states corresponding to the pre- or post-places of
+the current transition \verb|t|\footnote{\textsf{@some-atom atomically
+    dereferences an atom resulting in its current value.}}.  The first place
+\verb|p| is preserved and its traceability mapping is updated to point to the
+new \verb|OR| (line 54).  The other places are deleted in lines 55 and 56.
+Finally, the \verb|loop| is restarted with the remaining transitions and an
+\verb|applied| value of \verb|true|.
+
+\subsection{The OR Rule}
+\label{sec:or-rule}
+
+The OR rule is depicted in Listing~\ref{lst:or-rule}.  In contrast to the case
+description, it doesn't delete the places (or corresponding OR states) $q$ and
+$r$ to create a new place (or corresponding OR state) $p$, but instead it
+reuses $q$ as $p$ and only deletes $r$.
+
+The \verb|or-rule| gets the Petri-net model \verb|pn|, the statechart model
+\verb|sc|, and the traceability map atom \verb|place2or|.  It's mechanics for
+searching for matches in terms of \verb|loop| and \verb|recur| are almost
+identical to the \verb|and-rule|, so the rule is described a bit more concisely
+here.  One minor difference is that the variable \verb|ts| is initially bound
+to a vector of all transitions.  \verb|eallobjects| returns a lazy sequence,
+that is, a sequence where elements are computed (\emph{realized}) when they are
+consumed.  Since this rule deletes transitions, the fail-fast EMF model
+iterator underlying the lazy sequence will break.  The explicit conversion to a
+vector forces that all transitions are computed beforehand.
+
+\begin{listing}[H]
+  \begin{clojurecode*}{firstnumber=61}
+(defn or-rule [pn sc place2or]
+  (loop [ts (vec (eallobjects pn 'Transition)), applied false]
+    (if (seq ts)
+      (let [t (first ts), preps (prep t), postps (postp t)]
+        (if (= 1 (count preps) (count postps))
+          (let [q (first preps), r (first postps)]
+            (if (and (not (member? r (adjs q :pret :postp)))
+                     (not (member? r (adjs q :postt :prep))))
+              (let [merger (@place2or q), mergee (@place2or r)]
+                (edelete! t)
+                (eaddall! q :pret  (eget-raw r :pret))
+                (eaddall! q :postt (eget-raw r :postt))
+                (edelete! r)
+                (eaddall! merger :contains (eget-raw mergee :contains))
+                (edelete! mergee)
+                (recur (rest ts) true))
+              (recur (rest ts) applied)))
+          (recur (rest ts) applied)))
+      applied)))
+  \end{clojurecode*}
+  \label{lst:or-rule}
+  \caption{The OR rule}
+\end{listing}
+
+Lines 63 to 68 specify the application condition of the rule.  If the pre- and
+post-place sets of the current transition \verb|t| both contain only a single
+place \verb|q| and \verb|r|, respectively, and if \verb|r| is neither reachable
+from \verb|q| by traversing the \verb|pret| reference followed by the
+\verb|postp| reference, nor reachable from \verb|q| by traversing the
+\verb|postt| followed by the \verb|prep| reference, then \verb|t| is a matching
+transition.  In that case, the transition \verb|t| is deleted.  \verb|r|'s
+\verb|pret| and \verb|postt| references are merged into \verb|q|, and \verb|r|
+is deleted.  Similarly, the OR states corresponding to \verb|q| (\verb|merger|)
+and \verb|r| (\verb|mergee|) are merged, i.e., the contents of \verb|mergee|
+are transferred to \verb|merger|, and \verb|mergee| is deleted.  Finally, the
+loop is restarted with the remaining transitions and an \verb|applied| value of
+\verb|true|.
+
+
+
+\subsection{Extension: The HyperEdge Assignment Rule}
+\label{sec:hyperedge-rule}
+
+The hyperedge assignment rule is shown in Listing~\ref{lst:hyperedge-rule}.  It
+assigns each \verb|HyperEdge| in the target statechart model to the
+\verb|Compound| state that contains all its \verb|rnext| and \verb|next|
+states.
+
+The rule receives the statechart model \verb|sc|.
+
+\begin{listing}[H]
+  \begin{clojurecode*}{firstnumber=80}
+(defn assign-hyperedges [sc]
+  (doseq [e (eallobjects sc 'HyperEdge)]
+    (eset! e :rcontains
+           (first (apply clojure.set/intersection
+                         (map #(reachables % [p-+ --<>])
+                              (concat (eget e :next) (eget e :rnext))))))))
+  \end{clojurecode*}
+  \label{lst:hyperedge-rule}
+  \caption{The hyperedge assignment rule}
+\end{listing}
+
+It iterates over all \verb|HypedEdge| elements in the model, and for each
+hyperedge \verb|e|, it sets its \verb|rcontains| reference.  The container
+element is determined as follows.
+
+For every \verb|Basic| state in \verb|e|'s \verb|next| and \verb|rnext|
+references, the ordered set of containers is computed using a \emph{regular
+  path expression}.  The \verb|reachables| function gets the start element of
+the search, and a vector describing the path expression.  It returns the
+ordered set of elements reachable by a path matching the regular path
+expression.  Here, the \verb|--<>| defines that elements should be traversed
+towards their container, and by wrapping it in \verb|[p-+ ...]| this iteration
+may take place one or many times (transitive closure).  Thus, the ordered
+result set contains all containers in the order from nearest to farthest in the
+containment hierarchy.  The intersection of all those ordered sets is an
+ordered set of all \verb|Compound| states containing all predecessor and
+successor \verb|Basic| states of \verb|e|, and its first element is the deepest
+one in the overall containment hierarchy.
+
+If the reduction rules didn't terminate with exactly one \verb|Place| left and
+one single top-level \verb|OR| state, as it happens with some of the test
+models, the intersection above is empty.  In that case, the \verb|rcontains|
+reference is set to \verb|nil|, i.e., it is left unset.
+
+\subsection{The Statechart Creation Rule}
+\label{sec:statechart-rule}
+
+The final rule of the transformation is the \verb|create-top| rule shown in
+Listing~\ref{lst:statechart-rule}.  It receives the target statechart model
+\verb|sc| as argument.
+
+\begin{listing}[H]
+  \begin{clojurecode*}{firstnumber=86}
+(defn create-top [sc]
+  (let [top-ors (filter #(not (eget % :rcontains)) (eallobjects sc 'OR))]
+    (when (= 1 (count top-ors))
+      (let [statechart (ecreate! sc 'Statechart), top (ecreate! sc 'AND)]
+        (eset! statechart :topState top)
+        (eset! top :rcontains top-ors)))))
+  \end{clojurecode*}
+  \label{lst:statechart-rule}
+  \caption{The statechart creation rule}
+\end{listing}
+
+If there is exactly one \verb|OR| state that's not contained in some other
+\verb|Compound| state, the reduction process has been applied successfully.  In
+that case, a new \verb|Statechart| element \verb|statechart| and a new
+\verb|AND| state \verb|top| are created.  \verb|top| is set as \verb|topState|
+of the \verb|statechart|, and the contents of \verb|top| are set to the single
+top-level \verb|OR| state.
+
+
+\section{Extension: Validation}
+\label{sec:validation}
+
+As an extension to the case (in addition to the hyperedge assignment rule
+discussed in Section~\ref{sec:hyperedge-rule}), a small testing project for
+validating the result statechart models of this transformation case has been
+implemented.  It is published at
+github\footnote{\url{https://github.com/tsdh/ttc-2013-pn2sc-validation}} where
+also its usage documentation can be found.
+
+This project is capable of testing the correctness of the result statecharts of
+provided eleven Petri-nets, and it also checks the result statecharts generated
+from the 15 performance testing Petri-nets.
+
+The following constraints are checked for the primary test cases:
+
+\begin{compactenum}
+\item For the test cases where a complete reduction is feasible, there has to
+  be exactly one \verb|Statechart| element containing exactly one \verb|AND|
+  state containing the top-most \verb|OR| state created by the reduction rules.
+\item For every element type in the statechart metamodel, the expected number
+  of instances is checked against the actual number of instances.
+\item The expected containment hierarchy is checked against the actual
+  containment hierarchy.  If at least one hyperedge is contained in some
+  \verb|Compound| state, the correct containments of hyperedges is also tested.
+  Else, a warning is issued referring to the hyperedge containment extension.
+\item The expected contents of the \verb|rnext| and \verb|next| references of
+  each \verb|HyperEdge| are checked against their actual contents.
+\end{compactenum}
+
+For the large results of the performance test cases, only the checks 1 and 2
+are performed.
+
+
+\section{Running the Transformation on SHARE}
+\label{sec:run-transformation}
+
+The FunnyQT solution of this case (and the other cases) are installed on the
+SHARE image \verb|Ubuntu12LTS_TTC13::FunnyQT.vdi|.  Running the solution is
+simple.
+
+\begin{compactenum}
+\item Open a terminal.
+\item Change to the Petri-Nets to Statecharts project:
+
+  \verb|$ cd ~/Desktop/FunnyQT_Solutions/ttc-2013-pn2sc/|
+\item Run the test cases:
+
+  \verb|$ lein test|
+\end{compactenum}
+
+This will run the complete transformation (initialization + reduction) on all
+provided test Petri-net models (the 11 main test cases and the performance test
+cases) and print the execution times.  The result models are also validated
+using the testing project discussed in Section~\ref{sec:validation}.  The
+result models and visualizations of the main test cases' results are saved to
+the \verb|results| directory.
+
+Furthermore, the stand-alone initialization transformation is applied to every
+provided model as well.  Again, the times needed to apply the transformation
+are printed.
+
+
+\section{Evaluation}
+\label{sec:evaluation}
+
+In this section, the solution is evaluated according to the evaluation criteria
+listed in the case description \cite{pn2sccasedesc}.
+
+\paragraph{Transformation correctness.}
+
+The validation project discussed in Section~\ref{sec:validation} that has been
+implemented as an extension to this case allows for testing the result
+statechart models.  For the main test cases, every important aspect of the
+result models including the containment hierarchy and the predecessors and
+successors of hyperedges are checked, and for the performance test cases, only
+the number of instances of every metamodel class is checked.  All tests pass
+for the result models of this solution.  Similarly, all tests pass for the
+result models created by the reference GrGen.NET solution.
+
+The validation project has also been tested with intentionally slightly wrong
+models, e.g., some \verb|next| link is missing at some hyperedge, there's some
+additional element, or an element is contained by the wrong \verb|Compound|
+state.  In all those cases, an assertion of the validation project failed.  So
+there's a high confidence that if the result models pass the tests, the
+transformation producing them is correct.
+
+\paragraph{Transformation performance.}
+
+
+Table~\ref{tab:eval-times} shows the evaluation times of the initialization
+tranformation, the reduction transformation, and the complete transformation
+involving initialization and reduction.  The times needed for loading and
+saving the models from/to XMI files, the times needed for validation, and the
+times needed for creating visualizations are excluded.
+
+The measurements have been done directly on the SHARE demo.  As stated in
+Section~\ref{sec:run-transformation}, \verb|lein test| will first evaluate the
+complete transformation on all models, and then it'll evaluate the
+initialization transformation again on all models.  The evaluation times
+printed there are contained in the tables third and first column, respectively.
+The second column is the difference between the value in the third column and
+the value in the first column.
+
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{| c | r | r |r |}
+    \hline
+    \textbf{Test Case} & \textbf{Init. only} & \textbf{Red. only} & \textbf{Init. \& Red.}\\
+    \hline
+    1        & 1 ms    & 81 ms & 82 ms\\
+    2        & 1 ms    & 37 ms & 38 ms\\
+    3        & <1 ms   & 23 ms & 24 ms\\
+    4        & <1 ms   & 9 ms & 10 ms\\
+    5        & <1 ms   & 2 ms  & 3 ms\\
+    6        & <1 ms   & 2 ms  & 3 ms\\
+    7        & <1 ms   & 15 ms & 16 ms\\
+    8        & <1 ms   & 20 ms & 21 ms\\
+    9        & <1 ms   & 7 ms  & 8 ms\\
+    10       & <1 ms   & 7 ms  & 8 ms\\
+    11       & <1 ms   & 9 ms  & 10 ms\\
+    \hline
+    sp200    & 12 ms   & 140 ms    & 152 ms\\
+    sp300    & 18 ms   & 92 ms     & 110 ms\\
+    sp400    & 24 ms   & 97 ms     & 121 ms\\
+    sp500    & 28 ms   & 107 ms    & 125 ms\\
+    sp1000   & 69 ms   & 223 ms    & 292 ms\\
+    sp2000   & 109 ms  & 267 ms    & 376 ms\\
+    sp3000   & 153 ms  & 448 ms    & 601 ms\\
+    sp4000   & 226 ms  & 517 ms    & 743 ms\\
+    sp5000   & 274 ms  & 743 ms    & 1017 ms\\
+    sp10000  & 553 ms  & 1509 ms   & 2062 ms\\
+    sp20000  & 960 ms  & 3652 ms   & 4612 ms\\
+    sp40000  & 1887 ms & 9457 ms   & 11344 ms\\
+    sp80000  & 3849 ms & 26442 ms  & 30291 ms\\
+    sp100000 & 4755 ms & 35639 ms  & 40394 ms\\
+    sp200000 & 9407 ms & 105257 ms & 114664 ms\\
+    \hline
+  \end{tabular}
+  \caption{Evaluation times on SHARE}
+  \label{tab:eval-times}
+\end{table}
+
+That the first test cases evaluate a bit slower than subsequent ones is
+probably caused by the JVM just-in-time compiling critical code paths.
+Fluctuations in the evaluation times of models of comparable size are also
+partly caused by JVM-internals such as garbage collection.  Nevertheless, the
+order of magnitude is stable across multiple runs of the transformations.
+
+Anyhow, the evaluation times are quite good, both absolute as well as relative
+compared to the input model sizes.  The initialization transformation scales
+linearly with the size of the input Petri-net models.  The reduction
+transformation also scales in that order of magnitude.  When taking the time
+needed for the \verb|sp1000| model as a baseline, then the \verb|sp10000| model
+is transformed in $0.7n$ milliseconds for $n$ being the time expected when
+assuming a linear correlation between model size and execution time.  The
+\verb|sp40000| model takes $n$ milliseconds, the \verb|sp100000| takes $1.6n$
+milliseconds, and the \verb|sp200000| model takes $2.4n$ milliseconds.
+
+\paragraph{Transformation understandability.}
+
+Although the solution requires some understanding of Clojure, it shouldn't be
+hard to get a grasp on it.
+
+The initialization transformation uses a FunnyQT facility allowing to specify
+typical model transformations with a syntax and semantics similar to ATL or
+ETL, so people knowing these languages should feel right at home.
+
+The reduction transformation is a bit more complex, but the application
+conditions of the rules and the actions that are performed are taken quite
+literally from the case description with the exception that some elements are
+preserved and merged instead of replaced.
+
+One important aspect with respect to understandability is also the fact that
+the transformations are very concise.  In total, the initialization and the
+reduction transformation need just the 91 lines of code that was depicted
+completely in the previous sections.  The initialization transformation
+including its wrapper function mangling the traceability mappings is just 23
+lines of code.  The complete reduction transformation with its four rules, the
+few helper functions, and the function iteratively applying the rules as long
+as possible amounts to 68 lines of code.
+
+
+\paragraph{Bonus criteria.}
+
+The bonus tasks dealing with \emph{verification} and \emph{simulation support}
+haven't been tackled.
+
+The initialization transformation could be extended quite easily to deal with
+the \emph{change propagation} scenarios, simply because FunnyQT transformations
+are written in the full-fledged programming language Clojure having access to
+any JVM library's features.  Thus, adapters performing the required changes on
+the target statechart could be registered to handle notifications about new,
+deleted, or updated elements in the source Petri-net using the standart EMF
+notification framework.  Since the initialization transformation created a
+complete traceability mapping, referring to previously created elements is
+easy.
+
+There is no support special support for \emph{reversing the transformation}, or
+for defining the transformation bidirectionally in the first place.
+
+Proper \emph{debugging support} is also not yet ready for prime-time in the
+Clojure world.  There are some attempts at debuggers allowing to set
+breakpoints and examine the lexical extent around the breakpoint, but those are
+not too usable right now.  Another difficulty with functional languages
+involving some kind of laziness is that errors might be signaled at a location
+very different to where the bug is actually manifested in the source code.
+Nevertheless, FunnyQT has rather good model visualization tools that have been
+used while programming the reduction rules in order to visualize the matching
+elements when a rule has been applicable.
+
+
+
+\bibliographystyle{alpha}
+\bibliography{ttc13-funnyqt-pn2sc}
+
+
+\end{document}
+
+
+
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-engine: pdflatex-shell-escape
+%%% TeX-master: t
+%%% End:
