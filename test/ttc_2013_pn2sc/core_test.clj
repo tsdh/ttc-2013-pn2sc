@@ -1,7 +1,7 @@
 (ns ttc-2013-pn2sc.core-test
   (:require [clojure.string :as str])
   (:use clojure.test funnyqt.emf funnyqt.protocols funnyqt.query
-        ttc-2013-pn2sc.core
+        funnyqt.visualization ttc-2013-pn2sc.core
         [ttc-2013-pn2sc-validation.core :only [validate
                                                test-case-1-result-spec
                                                test-case-2-result-spec

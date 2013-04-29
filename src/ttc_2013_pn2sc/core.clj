@@ -47,7 +47,9 @@
                 (eaddall! merger :contains (eget-raw mergee :contains))
                 (edelete! mergee)
                 (recur (rest ts) true))
-              (recur (rest ts) applied)))
+              (if (= q r)
+                (do (edelete! t) (recur (rest ts) true))
+                (recur (rest ts) applied))))
           (recur (rest ts) applied)))
       applied)))
 

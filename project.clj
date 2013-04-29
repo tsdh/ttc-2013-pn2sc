@@ -4,7 +4,7 @@
   :license {:name "GNU General Public License, Version 3"
             :url "http://www.gnu.org/licenses/gpl.html"}
   :dependencies [[org.clojure/clojure "1.5.1"]
-                 [funnyqt "0.4.23"]]
+                 [funnyqt "0.4.25"]]
   :plugins [[lein-git-deps "0.0.1-SNAPSHOT" :exclusions [org.clojure/clojure]]]
   :git-dependencies [["git://github.com/tsdh/ttc-2013-pn2sc-validation.git"]]
   :source-paths ["src/" ".lein-git-deps/ttc-2013-pn2sc-validation/src/"]
