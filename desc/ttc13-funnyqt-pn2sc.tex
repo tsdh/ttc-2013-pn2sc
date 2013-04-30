@@ -416,7 +416,7 @@ to a vector of all transitions.  \verb|eallobjects| returns a lazy sequence,
 that is, a sequence where elements are computed (\emph{realized}) when they are
 consumed.  Since this rule deletes transitions, the fail-fast EMF model
 iterator underlying the lazy sequence will break.  The explicit conversion to a
-vector forces that all transitions are computed beforehand.
+vector enforces that all transitions are computed beforehand.
 
 \begin{listing}[H]
   \begin{clojurecode*}{firstnumber=61}
@@ -426,15 +426,17 @@ vector forces that all transitions are computed beforehand.
       (let [t (first ts), preps (prep t), postps (postp t)]
         (if (= 1 (count preps) (count postps))
           (let [q (first preps), r (first postps)]
-            (if (and (not (member? r (adjs q :pret :postp)))
-                     (not (member? r (adjs q :postt :prep))))
+            (if (or (identical? q r)
+                    (and (not (member? r (adjs q :pret :postp)))
+                         (not (member? r (adjs q :postt :prep)))))
               (let [merger (@place2or q), mergee (@place2or r)]
+                (when-not (identical? q r)
+                  (eaddall! q :pret  (eget-raw r :pret))
+                  (eaddall! q :postt (eget-raw r :postt))
+                  (edelete! r)
+                  (eaddall! merger :contains (eget-raw mergee :contains))
+                  (edelete! mergee))
                 (edelete! t)
-                (eaddall! q :pret  (eget-raw r :pret))
-                (eaddall! q :postt (eget-raw r :postt))
-                (edelete! r)
-                (eaddall! merger :contains (eget-raw mergee :contains))
-                (edelete! mergee)
                 (recur (rest ts) true))
               (recur (rest ts) applied)))
           (recur (rest ts) applied)))
@@ -444,13 +446,15 @@ vector forces that all transitions are computed beforehand.
   \caption{The OR rule}
 \end{listing}
 
-Lines 63 to 68 specify the application condition of the rule.  If the pre- and
+Lines 65 to 69 specify the application condition of the rule.  If the pre- and
 post-place sets of the current transition \verb|t| both contain only a single
-place \verb|q| and \verb|r|, respectively, and if \verb|r| is neither reachable
-from \verb|q| by traversing the \verb|pret| reference followed by the
-\verb|postp| reference, nor reachable from \verb|q| by traversing the
-\verb|postt| followed by the \verb|prep| reference, then \verb|t| is a matching
-transition.  In that case, the transition \verb|t| is deleted.  \verb|r|'s
+place \verb|q| and \verb|r|, respectively, and if either \verb|q| and \verb|r|
+are identical or \verb|r| is neither reachable from \verb|q| by traversing the
+\verb|pret| reference followed by the \verb|postp| reference, nor reachable
+from \verb|q| by traversing the \verb|postt| followed by the \verb|prep|
+reference, then \verb|t| is a matching transition.
+
+In that case, and if \verb|q| and \verb|r| are not identical, \verb|r|'s
 \verb|pret| and \verb|postt| references are merged into \verb|q|, and \verb|r|
 is deleted.  Similarly, the OR states corresponding to \verb|q| (\verb|merger|)
 and \verb|r| (\verb|mergee|) are merged, i.e., the contents of \verb|mergee|
@@ -458,6 +462,8 @@ are transferred to \verb|merger|, and \verb|mergee| is deleted.  Finally, the
 loop is restarted with the remaining transitions and an \verb|applied| value of
 \verb|true|.
 
+In any case, the transition \verb|t| is deleted, and the rule recurs to check
+the remaining transitions.
 
 
 \subsection{Extension: The HyperEdge Assignment Rule}
@@ -471,7 +477,7 @@ states.
 The rule receives the statechart model \verb|sc|.
 
 \begin{listing}[H]
-  \begin{clojurecode*}{firstnumber=80}
+  \begin{clojurecode*}{firstnumber=82}
 (defn assign-hyperedges [sc]
   (doseq [e (eallobjects sc 'HyperEdge)]
     (eset! e :rcontains
@@ -514,7 +520,7 @@ Listing~\ref{lst:statechart-rule}.  It receives the target statechart model
 \verb|sc| as argument.
 
 \begin{listing}[H]
-  \begin{clojurecode*}{firstnumber=86}
+  \begin{clojurecode*}{firstnumber=88}
 (defn create-top [sc]
   (let [top-ors (filter #(not (eget % :rcontains)) (eallobjects sc 'OR))]
     (when (= 1 (count top-ors))
@@ -710,12 +716,12 @@ preserved and merged instead of replaced.
 
 One important aspect with respect to understandability is also the fact that
 the transformations are very concise.  In total, the initialization and the
-reduction transformation need just the 91 lines of code that was depicted
+reduction transformation need just the 93 lines of code that was depicted
 completely in the previous sections.  The initialization transformation
 including its wrapper function mangling the traceability mappings is just 23
 lines of code.  The complete reduction transformation with its four rules, the
 few helper functions, and the function iteratively applying the rules as long
-as possible amounts to 68 lines of code.
+as possible amounts to 70 lines of code.
 
 
 \paragraph{Bonus criteria.}
