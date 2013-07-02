@@ -67,40 +67,28 @@ plain querying and model manipulation APIs.
 \section{The Initialization Transformation}
 \label{sec:init-transformation}
 
-The complete initialization transformation is shown in Listing~\ref{lst:init}.
-It uses FunnyQT's model transformation API.
+The complete initialization transformation using FunnyQT's model transformation
+API is shown in Listing~\ref{lst:init}.
 
 A transformation is declared with the \verb|deftransformation| macro.  It
 receives the name of the transformation, i.e., \verb|initialize-statechart|, a
-vector of input and output models, and arbitrary many rules.
-
-The argument vector declares that the transformation receives one single input
+vector of input and output models, and arbitrary many rules.  Here, the
+argument vector declares that the transformation receives one single input
 model \verb|pn| which is an EMF model, and it receives exactly one output model
 \verb|sc| which is also an EMF model.  It could also receive many input or
 output models, and the models could belong to different modeling frameworks as
 well.
 
-\begin{sloppypar}
-  The transformation consists of two transformation rules:
-  \verb|place2basic-and-or|, and \verb|transition2hyperedge|.  Every rule has
-  exactly one parameter denoting the source element.  The \verb|:from| clause
-  defines the metamodel type the rule is applicable for.  The \verb|:to| clause
-  specifies which target elements have to be created.  Additionally, arbitrary
-  constraints could be defined for a rule using a \verb|:when| clause.
-  Thereafter, arbitrary code may follow for initializing the newly created
-  elements and calling other rules.
-\end{sloppypar}
-
-When a rule gets called and is applicable with respect to its declared
-\verb|:from| type and \verb|:when| constraint, it creates the elements declared
-in \verb|:to| in the target model, and evaluates its body.  In case there is
-just one new element declared in \verb|:to|, it returns just that.  If there
-are many new elements, it returns them as a vector in their declaration order.
-Furthermore, a traceability mapping is created from the source element to the
-rule's return value.  If a rule gets called multiple times for a single
-element, the second and all following calls just return the result of the first
-invocation.
-
+The transformation consists of two rules: \verb|place2basic-and-or|, and
+\verb|transition2hyperedge|.  \verb|place2basic-and-or| receives an input
+\verb|Place| and creates an \verb|OR| and a \verb|Basic| in the output model.
+It also sets the new basic's name to the name of the place and assigns it as
+content of the new \verb|OR|.  Finally, it sets the basic's \verb|rnext| and
+\verb|next| references to the value of applying \verb|transition2hyperedge| to
+any pre-transition or post-transition of the input place.
+\verb|place2basic-and-or| is also a top-level rule meaning it's applied
+automatically to matching elements while the non-top-level rule
+\verb|transition2hyperedge| has to be called explicitly from other rules.
 
 \begin{listing}[H]
   \begin{clojurecode}
@@ -123,57 +111,15 @@ invocation.
   \caption{The initialization transformation}
 \end{listing}
 
-\begin{sloppypar}
-  The \verb|place2basic-and-or| rule creates an \verb|OR o| and a
-  \verb|Basic b| for any \verb|Place p| it is called with, it sets the name of
-  the \verb|Basic| to the name of the \verb|Place|, and assigns the new
-  \verb|OR| as container of \verb|b|.  Lastly, it maps the
-  \verb|transition2hyperedge| rule over the pre/post-transitions of \verb|p|
-  setting the results to \verb|b|'s \verb|rnext|/\verb|next| references.
-
-  The \verb|^:top| metadata at the rule specifies that this rule is called
-  automatically for any \verb|Place| in the source Petri-net model \verb|pn|.
-  In contrast, the \verb|transition2hyperedge| rule is only called explicitly
-  from \verb|place2basic-and-or|.
-\end{sloppypar}
-
-The result of such a transformation is always a map of traceability
-information.  The keys of the map are keywords denoting the rules, the values
-are maps from source elements to rule results.  So in this concrete case, the
-traceability map returned by the transformation has the form:
-
-\begin{clojurecode*}{linenos=false}
-{:place2basic-and-or   {<place1> [<or1> <basic1>], ...},
- :transition2hyperedge {<transition1> <hyperedge1>, ...}}
-\end{clojurecode*}
-
-The function \verb|init-statechart| depicted in Listing~\ref{lst:init-fn} is a
-convenience wrapper for applying the transformation.
-
-\begin{listing}[H]
-  \begin{clojurecode*}{firstnumber=15}
-(defn init-statechart [pn]
-  (let [sc (new-model)
-        trace (initialize-statechart pn sc)]
-    [sc
-     (apply hash-map (mapcat (fn [[p [o b]]] [p o])
-                             (:place2basic-and-or trace)))
-     (apply hash-map (mapcat (fn [[p [o b]]] [p b])
-                             (:place2basic-and-or trace)))
-     (:transition2hyperedge trace)]))
-  \end{clojurecode*}
-  \label{lst:init-fn}
-  \caption{An initialization transformation wrapper function}
-\end{listing}
-
-It receives a Petri-net model \verb|pn|, creates a new empty model \verb|sc|
-for the statechart, calls the \verb|initialize-statechart| transformation, and
-then mangles the traceability map in order to return a vector of four
-components: the initialized statechart model, a map from places to
-corresponding \verb|OR| elements, a map from places to corresponding
-\verb|Basic| elements, and a map from transitions to corresponding hyperedges.
-The first map is required by the reduction transformation, whereas the other
-two maps are only used by the unit-tests for the initialization transformation.
+When a rule gets called and is applicable with respect to its declared
+\verb|:from| type and \verb|:when| constraint, it creates the elements declared
+in \verb|:to| in the target model, and evaluates its body.  In case there is
+just one new element declared in \verb|:to|, it returns just that.  If there
+are many new elements, it returns them as a vector in their declaration order.
+Furthermore, a traceability mapping is created from the source element to the
+rule's return value.  If a rule gets called multiple times for a single
+element, the second and all following calls just return the result of the first
+invocation.
 
 
 \section{The Reduction Transformation}
