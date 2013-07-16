@@ -8,4 +8,4 @@
   :plugins [[lein-git-deps "0.0.1-SNAPSHOT" :exclusions [org.clojure/clojure]]]
   :git-dependencies [["git://github.com/tsdh/ttc-2013-pn2sc-validation.git"]]
   :source-paths ["src/" ".lein-git-deps/ttc-2013-pn2sc-validation/src/"]
-  :jvm-opts ["-Xms700m" "-Xmx800m"])
+  :jvm-opts ^:replace ["-Xms800m" "-Xmx800m"])
