@@ -7,18 +7,19 @@
 \usepackage[T1]{fontenc}
 \usepackage{hyperref}
 \usepackage{paralist}
-\usepackage{verbatim}
 \usepackage{footmisc}
 
 \makeatletter
 \def\verbatim@font{\ttfamily\small}
 \makeatother
 
-\usepackage{minted}
-\newminted{clojure}{fontsize=\footnotesize,frame=lines,linenos}
+\usepackage{color}
+\usepackage{fancyvrb}
+\input{pyg}
+\renewcommand{\figurename}{Listing}
 
 \title{Solving the Petri-Nets to Statecharts Transformation Case with FunnyQT}
-\author{Dipl.-Inform. Tassilo Horn
+\author{Tassilo Horn
   \email{horn@uni-koblenz.de}
   \institute{Institute for Software Technology, University Koblenz-Landau, Germany}}
 
@@ -48,13 +49,14 @@
 \section{Introduction}
 \label{sec:introduction}
 
-\emph{FunnyQT} is a new model querying and transformation approach which is
-implemented as an API for the functional, JVM-based Lisp-dialect Clojure.  It
-provides several sub-APIs for implementing different kinds of queries and
-transformations.  For example, there is a model-to-model transformation API,
-and there is an in-place transformation API for writing programmed graph
-transformations.  FunnyQT currently supports EMF and JGraLab models, and it can
-be extended to other modeling frameworks, too.
+\emph{FunnyQT}\footnote{\url{https://github.com/jgralab/funnyqt}} is a new
+model querying and transformation approach which is implemented as an API for
+the functional, JVM-based Lisp-dialect Clojure.  It provides several sub-APIs
+for implementing different kinds of queries and transformations.  For example,
+there is a model-to-model transformation API, and there is an in-place
+transformation API for writing programmed graph transformations.  FunnyQT
+currently supports EMF and JGraLab models, and it can be extended to other
+modeling frameworks, too.
 
 For solving the tasks of this transformation case\footnote{This FunnyQT
   solution is available at \url{https://github.com/tsdh/ttc-2013-pn2sc} and on
@@ -76,7 +78,7 @@ shown in Listing~\ref{lst:init}.  This API provides an internal DSL
 
 A transformation is declared with the \verb|deftransformation| macro.  It
 receives the name of the transformation, i.e., \verb|initialize-statechart|, a
-vector of input and output models, and arbitrary many rules.  Here, the
+vector of input and output models, and arbitrarily many rules.  Here, the
 argument vector declares that the transformation receives one single input
 model \verb|pn| which is an EMF model, and it receives exactly one output model
 \verb|sc| which is also an EMF model.  It could also receive many input and
@@ -88,41 +90,28 @@ creates an \verb|OR| and a \verb|Basic| in the output model.  It also sets the
 new basic's name to the name of the place and assigns it as content of the new
 \verb|OR|.  Finally, it sets the basic's \verb|rnext| and \verb|next|
 references to the value of applying \verb|transition2hyperedge| to any
-pre-transition or post-transition of the input place.
-\verb|place2basic-and-or| is a top-level rule meaning it's applied
-automatically to all matching elements while the non-top-level rule
-\verb|transition2hyperedge| has to be called explicitly from other rules.
+pre-transition or post-transition of the input place\footnote{\textsf{map}
+  takes a function $f$ and a collection $c$.  It applies $f$ to the items of
+  $c$ returning the sequence of results.}.  \verb|place2basic-and-or| is a
+top-level rule meaning it's applied automatically to all matching elements
+while the non-top-level rule \verb|transition2hyperedge| has to be called
+explicitly from other rules.
 
-\begin{listing}[H]
-  \begin{clojurecode}
-(deftransformation initialize-statechart [[pn :emf] [sc :emf]]
-  (^:top place2basic-and-or [p]
-         :from 'Place
-         :to [o 'OR, b 'Basic]
-         (eset! b :name (eget p :name))
-         (eset! b :rcontains o)
-         (eset! b :rnext (map transition2hyperedge
-                              (eget p :pret)))
-         (eset! b :next  (map transition2hyperedge
-                              (eget p :postt))))
-  (transition2hyperedge [t]
-         :from 'Transition
-         :to [he 'HyperEdge]
-         (eset! he :name (eget t :name))))
-  \end{clojurecode}
+\begin{figure}[h!]
+  \input{lst/01}
   \label{lst:init}
   \caption{The initialization transformation}
-\end{listing}
+\end{figure}
 
 When a rule gets called and is applicable with respect to its declared
-\verb|:from| type and \verb|:when| constraint, it creates the elements declared
-in \verb|:to| in the target model, and evaluates its body.  In case there is
-just one new element declared in \verb|:to|, it returns just that.  If there
-are many new elements, it returns them as a vector in their declaration order.
-Furthermore, a traceability mapping is created from the source element to the
-rule's return value.  If a rule gets called multiple times for a single
-element, the second and all following calls just return the result of the first
-invocation.
+\verb|:from| type (and optional \verb|:when| constraint), it creates the
+elements declared in \verb|:to| in the target model, and evaluates its body.
+In case there is just one new element declared in \verb|:to|, it returns just
+that.  If there are many new elements, it returns them as a vector in their
+declaration order.  Furthermore, a traceability mapping is created from the
+source element to the rule's return value.  If a rule gets called multiple
+times for a single element, the second and all following calls just return the
+result of the first invocation.
 
 
 \section{The Reduction Transformation}
@@ -171,42 +160,26 @@ states wrapped in a Clojure atom\footnote{All Clojure data structures are
   that can be swapped atomically.  This is important here in order to update
   the traceability mapping when the AND-rule matches.}.
 
-\begin{listing}[ht]
-  \begin{clojurecode}
-(defn and-rule [pn sc prep-or-postp place2or]
-  (loop [ts (eallobjects pn 'Transition), applied false]
-    (if (seq ts)
-      (let [t (first ts), preps-or-postps (prep-or-postp t)]
-        (if (> (count preps-or-postps) 1)
-          (let [p (first preps-or-postps), prets (pret p), postts (postt p)]
-            (if (forall? #(and (= prets  (pret %))
-                               (= postts (postt %)))
-                         (rest preps-or-postps))
-              (let [new-or  (ecreate! sc 'OR), new-and (ecreate! sc 'AND)]
-                (eset! new-and :contains (mapv @place2or preps-or-postps))
-                (eadd! new-or  :contains new-and)
-                (swap! place2or assoc p new-or)
-                (doseq [op (rest preps-or-postps)]
-                  (edelete! op))
-                (recur (rest ts) true))
-              (recur (rest ts) applied)))
-          (recur (rest ts) applied)))
-      applied)))
-  \end{clojurecode}
+\begin{figure}[h!]
+  \input{lst/02}
   \label{lst:and-rule}
   \caption{The AND rule}
-\end{listing}
+\end{figure}
 
-The rule iterates over all transitions in the petri-net model \verb|pn| using a
-local tail-recursion (\verb|loop| and \verb|recur|).  Lines 5 to 9 check the
-preconditions of the rule: If the transition \verb|t| has more than one
-pre-/post-place, all of them must have the same set of pre- and
-post-transitions.  If that's the case, a new \verb|AND| and a new \verb|OR|
-state is created.  The new \verb|AND| contains all existing \verb|OR| states
-being the pre- or post-places of the transition \verb|t|, and the new \verb|OR|
-contains the new \verb|AND|.  Furthermore, the traceability map atom is updated
-in line 13 so that the first pre-/post-place \verb|p| now maps to the new
-\verb|OR|.  Lastly, all other pre-/post-places are deleted.
+The rule iterates over all transitions\footnote{\textsf{seq} takes a collection
+  and returns a sequential view on it or \textsf{nil} if the collection is
+  empty.  Therefore, it is the canonical non-emptiness check in Clojure.} in
+the petri-net model \verb|pn| using a local tail-recursion (\verb|loop| and
+\verb|recur|).  Lines 5 to 9 check the preconditions of the rule: If the
+transition \verb|t| has more than one pre-/post-place, all of them must have
+the same set of pre- and post-transitions.  If that's the case, a new
+\verb|AND| and a new \verb|OR| state is created.  The new \verb|AND| contains
+all existing \verb|OR| states being the pre- or post-places of the transition
+\verb|t|, and the new \verb|OR| contains the new \verb|AND|.  Furthermore, the
+traceability map atom is updated in line 13 so that the first pre-/post-place
+\verb|p| now maps to the new \verb|OR|.  Lastly, all other pre-/post-places are
+deleted\footnote{\textsf{doseq} is equivalent to Java's extended \textsf{for}
+  loop.}.
 
 
 \paragraph{The OR Rule.}
@@ -220,33 +193,11 @@ reuses $q$ as $p$ and only deletes $r$.
 The \verb|or-rule| gets the Petri-net model \verb|pn|, the statechart model
 \verb|sc|, and the traceability map atom \verb|place2or|.
 
-\begin{listing}[h!]
-  \begin{clojurecode}
-(defn or-rule [pn sc place2or]
-  (loop [ts (vec (eallobjects pn 'Transition)), applied false]
-    (if (seq ts)
-      (let [t (first ts), preps (prep t), postps (postp t)]
-        (if (= 1 (count preps) (count postps))
-          (let [q (first preps), r (first postps)]
-            (if (or (identical? q r)
-                    (and (not (member? r (adjs q :pret :postp)))
-                         (not (member? r (adjs q :postt :prep)))))
-              (let [merger (@place2or q), mergee (@place2or r)]
-                (when-not (identical? q r)
-                  (eaddall! q :pret  (eget-raw r :pret))
-                  (eaddall! q :postt (eget-raw r :postt))
-                  (edelete! r)
-                  (eaddall! merger :contains (eget-raw mergee :contains))
-                  (edelete! mergee))
-                (edelete! t)
-                (recur (rest ts) true))
-              (recur (rest ts) applied)))
-          (recur (rest ts) applied)))
-      applied)))
-  \end{clojurecode}
+\begin{figure}[h!t]
+  \input{lst/03}
   \label{lst:or-rule}
   \caption{The OR rule}
-\end{listing}
+\end{figure}
 
 Like the AND-rule, it iterates all transitions in the petri-net model.  Lines 5
 to 9 check the preconditions of the rule: If the transition \verb|t| has
@@ -267,7 +218,7 @@ transition \verb|t| is deleted.
   hyperedge.  Secondly, a validation
   tool\footnote{\url{https://github.com/tsdh/ttc-2013-pn2sc-validation}} has
   been implemented that uses FunnyQT to check result statechart models against
-  their expected outcome.
+  their expected outcome in terms of a very detailed unit test suite.
 \end{sloppypar}
 \section{Evaluation}
 \label{sec:evaluation}
@@ -347,113 +298,12 @@ elements when a rule has been applicable.
 \section{The complete Initialization Transformation}
 \label{sec:init-code}
 
-\begin{clojurecode}
-(deftransformation initialize-statechart [[pn :emf] [sc :emf]]
-  (^:top place2basic-and-or [p]
-         :from 'Place
-         :to [o 'OR, b 'Basic]
-         (eset! b :name (eget p :name))
-         (eset! b :rcontains o)
-         (eset! b :rnext (map transition2hyperedge (eget p :pret)))
-         (eset! b :next  (map transition2hyperedge (eget p :postt))))
-  (transition2hyperedge [t]
-         :from 'Transition
-         :to [he 'HyperEdge]
-         (eset! he :name (eget t :name))))
-
-(defn init-statechart [pn]
-  (let [sc (new-model)
-        trace (initialize-statechart pn sc)]
-    [sc
-     (apply hash-map (mapcat (fn [[p [o b]]] [p o])
-                             (:place2basic-and-or trace)))
-     (apply hash-map (mapcat (fn [[p [o b]]] [p b])
-                             (:place2basic-and-or trace)))
-     (:transition2hyperedge trace)]))
-\end{clojurecode}
+\input{lst/complete-init}
 
 \section{The complete Reduction Transformation}
 \label{sec:reduction-code}
 
-\begin{clojurecode}
-(defn refs-as-set [ref elem]
-  (set (eget-raw elem ref)))
-
-(def postt (partial refs-as-set :postt))
-(def pret  (partial refs-as-set :pret))
-(def postp (partial refs-as-set :postp))
-(def prep  (partial refs-as-set :prep))
-
-(defn and-rule [pn sc prep-or-postp place2or]
-  (loop [ts (eallobjects pn 'Transition), applied false]
-    (if (seq ts)
-      (let [t (first ts), preps-or-postps (prep-or-postp t)]
-        (if (> (count preps-or-postps) 1)
-          (let [p (first preps-or-postps), prets (pret p), postts (postt p)]
-            (if (forall? #(and (= prets  (pret %))
-                               (= postts (postt %)))
-                         (rest preps-or-postps))
-              (let [new-or  (ecreate! sc 'OR), new-and (ecreate! sc 'AND)]
-                (eset! new-and :contains (mapv @place2or preps-or-postps))
-                (eadd! new-or  :contains new-and)
-                (swap! place2or assoc p new-or)
-                (doseq [op (rest preps-or-postps)]
-                  (edelete! op))
-                (recur (rest ts) true))
-              (recur (rest ts) applied)))
-          (recur (rest ts) applied)))
-      applied)))
-
-(defn or-rule [pn sc place2or]
-  (loop [ts (vec (eallobjects pn 'Transition)), applied false]
-    (if (seq ts)
-      (let [t (first ts), preps (prep t), postps (postp t)]
-        (if (= 1 (count preps) (count postps))
-          (let [q (first preps), r (first postps)]
-            (if (or (identical? q r)
-                    (and (not (member? r (adjs q :pret :postp)))
-                         (not (member? r (adjs q :postt :prep)))))
-              (let [merger (@place2or q), mergee (@place2or r)]
-                (when-not (identical? q r)
-                  (eaddall! q :pret  (eget-raw r :pret))
-                  (eaddall! q :postt (eget-raw r :postt))
-                  (edelete! r)
-                  (eaddall! merger :contains (eget-raw mergee :contains))
-                  (edelete! mergee))
-                (edelete! t)
-                (recur (rest ts) true))
-              (recur (rest ts) applied)))
-          (recur (rest ts) applied)))
-      applied)))
-
-(defn assign-hyperedges [sc]
-  (doseq [e (eallobjects sc 'HyperEdge)]
-    (eset! e :rcontains
-           (first (apply clojure.set/intersection
-                         (map #(reachables % [p-+ --<>])
-                              (concat (eget e :next) (eget e :rnext))))))))
-
-(defn create-top [sc]
-  (let [top-ors (filter #(not (eget % :rcontains)) (eallobjects sc 'OR))]
-    (when (= 1 (count top-ors))
-      (let [statechart (ecreate! sc 'Statechart), top (ecreate! sc 'AND)]
-        (eset! statechart :topState top)
-        (eset! top :contains top-ors)))))
-
-(defn create-statechart [pn]
-  (let [[sc place2or _ _] (init/init-statechart pn)
-        place2or (atom place2or)]
-    (iteratively (fn []
-                   (let [r     (and-rule pn sc prep  place2or)
-                         r (or (and-rule pn sc postp place2or) r)
-                         r (or (or-rule  pn sc place2or)       r)]
-                     r)))
-    (create-top sc)
-    (assign-hyperedges sc)
-    sc))
-\end{clojurecode}
-
-
+\input{lst/complete-reduction}
 
 \end{document}
 
