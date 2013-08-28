@@ -47,7 +47,7 @@
           (is (= (eget p :name) (eget basic :name)))
           (is (= or (eget basic :rcontains)))))
       (doseq [t (eallobjects pn 'Transition)]
-        (let [he (get trans2hyperedge t)]
+        (let [he (get trans2hyperedge [t])]
           (is he)
           (is (= (eget t :name) (eget he :name)))
           ;; Connection constraints (without respecting the order)

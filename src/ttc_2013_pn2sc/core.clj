@@ -1,6 +1,6 @@
 (ns ttc-2013-pn2sc.core
   (:use funnyqt.protocols funnyqt.emf funnyqt.query funnyqt.query.emf
-        [funnyqt.in-place :only [iteratively]])
+        [funnyqt.in-place :only [apply-repeatedly]])
   (:require [ttc-2013-pn2sc.init :as init]))
 
 (defn refs-as-set [ref elem]
@@ -20,9 +20,10 @@
             (if (forall? #(and (= prets  (pret %))
                                (= postts (postt %)))
                          (rest preps-or-postps))
-              (let [new-or  (ecreate! sc 'OR), new-and (ecreate! sc 'AND)]
-                (eset! new-and :contains (mapv @place2or preps-or-postps))
-                (eadd! new-or  :contains new-and)
+              (let [new-and (ecreate! nil 'AND
+                                      :contains (mapv @place2or preps-or-postps))
+                    new-or  (ecreate! sc 'OR
+                                      :contains [new-and])]
                 (swap! place2or assoc p new-or)
                 (doseq [op (rest preps-or-postps)]
                   (edelete! op))
@@ -63,18 +64,18 @@
 (defn create-top [sc]
   (let [top-ors (filter #(not (eget % :rcontains)) (eallobjects sc 'OR))]
     (when (= 1 (count top-ors))
-      (let [statechart (ecreate! sc 'Statechart), top (ecreate! sc 'AND)]
-        (eset! statechart :topState top)
-        (eset! top :contains top-ors)))))
+      (let [top (ecreate! nil 'AND :contains top-ors)
+            statechart (ecreate! sc 'Statechart :topState top)]
+        (eadd! sc statechart)))))
 
 (defn create-statechart [pn]
   (let [[sc place2or _ _] (init/init-statechart pn)
         place2or (atom place2or)]
-    (iteratively (fn []
-                   (let [r     (and-rule pn sc prep  place2or)
-                         r (or (and-rule pn sc postp place2or) r)
-                         r (or (or-rule  pn sc place2or)       r)]
-                     r)))
+    (apply-repeatedly (fn []
+                        (let [r     (and-rule pn sc prep  place2or)
+                              r (or (and-rule pn sc postp place2or) r)
+                              r (or (or-rule  pn sc place2or)       r)]
+                          r)))
     (create-top sc)
     (assign-hyperedges sc)
     sc))
